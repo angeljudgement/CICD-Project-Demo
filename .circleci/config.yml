@@ -1,0 +1,238 @@
+version: 2.1
+
+parameters:
+  dev-orb-version:
+    type: string
+    default: "2.2.0"
+  kubernetes-version:
+    type: string
+    default: "1.3.1"
+  cluster-name:
+    description: |
+      Name of the EKS cluster
+    type: string
+    default: project-final-$CIRCLE_BUILD_NUM
+  tag:
+    description: |
+      Tag name of Docker
+    type: string
+    default: udacity-final-app
+  aws-region:
+    description: |
+      aws region
+    type: string
+    default: $AWS_REGION
+  aws-ecr-name:
+    description: /
+      AWS Ecr Public Name
+    type: string
+    default: public.ecr.aws
+
+orbs:
+  # https://circleci.com/developer/orbs/orb/circleci/aws-eks
+  aws-eks: circleci/aws-eks@<<pipeline.parameters.dev-orb-version>>
+  # https://circleci.com/developer/orbs/orb/circleci/kubernetes
+  kubernetes: circleci/kubernetes@<<pipeline.parameters.kubernetes-version>>
+  aws-ecr: circleci/aws-ecr@8.2.1
+
+commands:
+  destroy-cluster:
+    description: Destroy cluster
+    steps:
+      - run:
+          name: Rollback on failed
+          when: on_fail
+          command: |
+            aws cloudformation delete-stack \
+            --stack-name eksctl-<<pipeline.parameters.cluster-name>>-cluster
+
+jobs:
+  build-project:
+    docker:
+      - image: python:3.7.3-stretch
+    steps:
+      - checkout
+
+      - run:
+          name: Install dependencies
+          command: |
+            # Install hadolint
+            cd project-final
+            make setup
+            make install
+      - run:
+          name: Check linting
+          command: |
+            cd project-final
+            make setup
+            make lint
+  # setup-aws-credential:
+  #   executor: aws-cli/default
+  #   steps:
+  #     - aws-cli/setup:
+  #         aws-access-key-id: AWS_ACCESS_KEY
+  #         aws-secret-access-key: AWS_ACCESS_SECRET
+  #         aws-region: AWS_REGION
+  build-docker:
+    docker:
+      - image: cimg/go:1.19.4
+        auth:
+          username: $DOCKERHUB_USERNAME
+          password: $DOCKERHUB_PASSWORD
+    steps:
+      - checkout
+      # ... steps for building/testing app ...
+      - setup_remote_docker:
+          version: 20.10.14
+          docker_layer_caching: true
+      # build and push Docker image
+      # - aws-ecr/build-and-push-image:
+      #     dockerfile:
+      - run:
+          name: "Finalize and push to Docker Hub"
+          command: |
+            cd project-final
+            # docker login -u AWS -p $(aws ecr get-login-password --region the-region-you-are-in) xxxxxxxxx.dkr.ecr.the-region-you-are-in.amazonaws.com
+            aws ecr-public get-login-password --region <<pipeline.parameters.aws-region>> | docker login --username AWS --password-stdin << pipeline.parameters.aws-ecr-name >>
+            export TAG=<< pipeline.parameters.tag >>:${CIRCLE_WORKFLOW_ID:0:7}
+            echo "Tag: $TAG"
+            export dockerpath=<< pipeline.parameters.aws-ecr-name >>/registry_alias/$TAG
+            echo "Docker ID and Image: $dockerpath"
+            docker build -t $TAG .
+            aws ecr-public create-repository \
+                --repository-name $TAG \
+                --catalog-data file://repositorycatalogdata.json \
+                --region <<pipeline.parameters.aws-region>>
+            docker tag $TAG $dockerpath
+            # Doesn't work let's try new thing
+            # echo $DOCKER_PASS | docker login -u $DOCKERHUB_USERNAME --password-stdin
+            docker push $dockerpath
+
+  create-cluster:
+    docker:
+      - image: "cimg/python:3.11.1"
+    steps:
+      - checkout
+      - run:
+          name: "Install AWS CLI due not supported image"
+          command: |
+            sudo apt install -y curl
+            curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
+            unzip awscliv2.zip
+            sudo ./aws/install
+      - aws-eks/install-aws-iam-authenticator:
+          release-tag: ""
+      - kubernetes/install:
+          kubectl-version: v1.22.0
+      - aws-eks/create-cluster:
+          cluster-name: << pipeline.parameters.cluster-name >>
+          aws-region: <<pipeline.parameters.aws-region>>
+          skip-kubectl-install: false
+          verbose: 3
+          node-type: t3.medium
+          nodes-max: 2
+          ssh-access: false
+          ssh-public-key: ""
+      - run:
+          command: |
+            kubectl get services
+          name: final-project-cluster-creation
+      - destroy-cluster
+
+  # test-cluster:
+  #   docker:
+  #     - image: "cimg/python:3.11.1"
+  #   steps:
+  #     - checkout
+  #     - kubernetes/install:
+  #         kubectl-version: v1.22.0
+  #     - aws-eks/update-kubeconfig-with-authenticator:
+  #         cluster-name: << pipeline.parameters.cluster-name >>
+  #     - run:
+  #         command: |
+  #           kubectl get services
+  #         name: test final-project-cluster
+  #     - destroy-cluster
+
+  deploy-application:
+    docker:
+      - image: "cimg/python:3.10"
+    steps:
+      - checkout
+      - kubernetes/install-kubectl
+      - run:
+          name: "Install AWS CLI due not supported image"
+          command: |
+            sudo apt install -y curl
+            curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
+            unzip awscliv2.zip
+            sudo ./aws/install
+            aws configure set region <<pipeline.parameters.aws-region>> --profile default
+      - run:
+          name: Finalize deployment file
+          command: |
+            export TAG=<< pipeline.parameters.tag >>-${CIRCLE_WORKFLOW_ID:0:7}
+            export dockerpath=${AWS_ACCOUNT_ID}.dkr.ecr.<<pipeline.parameters.aws-region>>.amazonaws.com/$TAG
+
+            echo "TAG: $TAG"
+            echo "dockerpath: $dockerpath"
+            ls
+
+            sed -e 's/${image-id}/${dockerpath}/g
+                    s/${container-name}/<<pipeline.parameters.cluster-name>>-container/g
+                    s/${app-label}/<<pipeline.parameters.tag>>-deploy/g
+                    s/${cluster-name}/<<pipeline.parameters.cluster-name>>/g' .circleci/deployment.yaml | tee .circleci/deployment.yaml
+
+            sed -e 's/${app-label}/<<pipeline.parameters.tag>>/g
+                    s/${cluster-name}/<<pipeline.parameters.cluster-name>>/g' .circleci/lb.yaml | tee .circleci/lb.yaml
+      - aws-eks/update-kubeconfig-with-authenticator:
+          cluster-name: << pipeline.parameters.cluster-name >>
+          aws-profile: default
+          aws-region: <<pipeline.parameters.aws-region>>
+          install-kubectl: true
+      - kubernetes/create-or-update-resource:
+          resource-file-path: .circleci/deployment.yaml
+          resource-name: deployment/<<pipeline.parameters.tag>>
+          server-side-apply: false
+          namespace: default
+          kustomize: false
+          action-type: apply
+      # - kubernetes/create-or-update-resource:
+      #     resource-file-path: .circleci/lb.yaml
+      #     resource-name: deployment/<<pipeline.parameters.tag>>
+      - run:
+          name: Cluster Status
+          command: |
+            kubectl get pods
+            kubectl describe pods
+      - destroy-cluster
+
+workflows:
+  build-and-deploy:
+    jobs:
+      - build-project
+      # - setup-aws-credential:
+      #     context: aws
+      # - build-docker:
+      #     requires: [build-project, setup-aws-credential]
+      - aws-ecr/build-and-push-image:
+          aws-access-key-id: AWS_ACCESS_KEY_ID
+          aws-cli-version: latest
+          aws-secret-access-key: AWS_SECRET_ACCESS_KEY
+          create-repo: true
+          region: <<pipeline.parameters.aws-region>>
+          registry-id: AWS_ACCOUNT_ID
+          public-registry: false
+          path: ./project-final
+          executor: aws-ecr/default
+          repo: << pipeline.parameters.tag >>
+          tag: "${CIRCLE_WORKFLOW_ID:0:7}"
+          requires: [build-project]
+      - create-cluster:
+          requires:
+            - aws-ecr/build-and-push-image
+          # requires: [build-docker]
+      # - test-cluster:
+      #     requires: [create-cluster]
+      - deploy-application:
+          requires: [create-cluster]

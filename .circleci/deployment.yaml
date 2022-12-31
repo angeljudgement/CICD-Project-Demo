@@ -1,0 +1,27 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ${cluster-name}-deployment
+  labels:
+    app: ${app-label}
+spec:
+  replicas: 3
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 25%
+      maxUnavailable: 30%
+  selector:
+    matchLabels:
+      app: ${app-label}
+  template:
+    metadata:
+      labels:
+        app: ${app-label}
+    spec:
+      containers:
+        - name: ${container-name}
+          image: ${image-id}
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 80

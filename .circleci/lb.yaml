@@ -1,0 +1,16 @@
+# https://kubernetes.io/docs/tasks/access-application-cluster/create-external-load-balancer/
+# More config can be seen
+apiVersion: v1
+kind: Service
+metadata:
+  name: ${cluster-name}-lb
+  labels:
+    app: ${app-label}
+spec:
+  selector:
+    app: ${app-label}
+  ports:
+    - port: 80
+      targetPort: 80
+      protocol: TCP
+  type: LoadBalancer

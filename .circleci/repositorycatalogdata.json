@@ -1,0 +1,7 @@
+{
+  "description": "This is a test repo for an Amazon ECR tutorial.",
+  "architectures": ["x86"],
+  "operatingSystems": ["Linux"],
+  "aboutText": "This repository is used as a tutorial only.",
+  "usageText": "This repository is not for public use."
+}
