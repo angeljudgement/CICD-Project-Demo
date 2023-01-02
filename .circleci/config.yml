@@ -11,7 +11,7 @@ parameters:
     description: |
       Name of the EKS cluster
     type: string
-    default: project-final
+    default: docker-hub-deployed-final
   tag:
     description: |
       Tag name of Docker
@@ -27,6 +27,10 @@ parameters:
       AWS Ecr Public Name
     type: string
     default: public.ecr.aws
+  # isCreated:
+  #   description: "Condition to create cluster"
+  #   type: string
+  #   default: ". ~/project/.circleci/run.sh <<pipeline.parameters.cluster-name>>"
 
 orbs:
   # https://circleci.com/developer/orbs/orb/circleci/aws-eks
@@ -77,8 +81,8 @@ jobs:
     docker:
       - image: cimg/go:1.19.4
         auth:
-          username: $DOCKERHUB_USERNAME
-          password: $DOCKERHUB_PASSWORD
+          username: $DOCKER_USERNAME
+          password: $DOCKER_PASSWORD
     steps:
       - checkout
       # ... steps for building/testing app ...
@@ -91,24 +95,39 @@ jobs:
       - run:
           name: "Finalize and push to Docker Hub"
           command: |
+            curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
+            unzip awscliv2.zip
+            sudo ./aws/install
+
             cd project-final
             # docker login -u AWS -p $(aws ecr get-login-password --region the-region-you-are-in) xxxxxxxxx.dkr.ecr.the-region-you-are-in.amazonaws.com
-            aws ecr-public get-login-password --region <<pipeline.parameters.aws-region>> | docker login --username AWS --password-stdin << pipeline.parameters.aws-ecr-name >>
+            # aws ecr get-login-password --region region | docker login --username AWS --password-stdin ${AWS_ACCOUNT_ID}.dkr.ecr.<<pipeline.parameters.aws-region>>.amazonaws.com
+            # aws ecr-public get-login-password --region <<pipeline.parameters.aws-region>> | docker login --username AWS --password-stdin << pipeline.parameters.aws-ecr-name >>
+            # Doesn't work let's try new thing
+            # echo $DOCKER_PASS | docker login -u $DOCKER_USERNAME --password-stdin
+            # aws ecr-public create-repository \
+            #     --repository-name $TAG \
+            #     --catalog-data file://repositorycatalogdata.json \
+            #     --region <<pipeline.parameters.aws-region>>
+            # export dockerpath=<< pipeline.parameters.aws-ecr-name >>/registry_alias/$TAG
+            # echo $DOCKER_PASSWORD | docker login -u $DOCKER_USER --password-stdin
+            # I tried to push these thing onto ECR but hopelessly been done. Im geting confused just to think about it...
+
             export TAG=<< pipeline.parameters.tag >>:${CIRCLE_WORKFLOW_ID:0:7}
             echo "Tag: $TAG"
-            export dockerpath=<< pipeline.parameters.aws-ecr-name >>/registry_alias/$TAG
+            export dockerpath=$DOCKER_USERNAME/$TAG
             echo "Docker ID and Image: $dockerpath"
             docker build -t $TAG .
-            aws ecr-public create-repository \
-                --repository-name $TAG \
-                --catalog-data file://repositorycatalogdata.json \
-                --region <<pipeline.parameters.aws-region>>
             docker tag $TAG $dockerpath
-            # Doesn't work let's try new thing
-            # echo $DOCKER_PASS | docker login -u $DOCKERHUB_USERNAME --password-stdin
+            echo $DOCKER_PASSWORD | docker login -u $DOCKER_USERNAME --password-stdin
             docker push $dockerpath
 
   create-cluster:
+    parameters:
+      is-created:
+        description: "Variable to check if cluster is ran up"
+        type: string
+        default: ${eval '. ./.circleci/run.sh <<pipeline.parameters.cluster-name>>'}
     docker:
       - image: "cimg/python:3.11.1"
     steps:
@@ -120,24 +139,40 @@ jobs:
             curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
             unzip awscliv2.zip
             sudo ./aws/install
-      - aws-eks/install-aws-iam-authenticator:
-          release-tag: ""
-      - kubernetes/install:
-          kubectl-version: v1.22.0
-      - aws-eks/create-cluster:
-          cluster-name: << pipeline.parameters.cluster-name >>
-          aws-region: <<pipeline.parameters.aws-region>>
-          skip-kubectl-install: false
-          verbose: 3
-          node-type: t3.medium
-          nodes-max: 2
-          ssh-access: false
-          ssh-public-key: ""
       - run:
+          name: "Check condition of isCreated"
           command: |
-            kubectl get services
-          name: final-project-cluster-creation
-      - destroy-cluster
+            eval '. ./.circleci/run.sh <<pipeline.parameters.cluster-name>>'
+      # - when:
+      #     condition:
+      #       equal: [true, <<parameters.is-created>>]
+      #     steps:
+      - run:
+          name: "Cluster is already created"
+          command: |
+            echo Cluster existed
+      # - unless:
+      #     condition:
+      #       equal: [false, <<parameters.is-created>>]
+      #     steps:
+      #       - aws-eks/install-aws-iam-authenticator:
+      #           release-tag: ""
+      #       - kubernetes/install:
+      #           kubectl-version: v1.22.0
+      #       - aws-eks/create-cluster:
+      #           cluster-name: << pipeline.parameters.cluster-name >>
+      #           aws-region: <<pipeline.parameters.aws-region>>
+      #           skip-kubectl-install: false
+      #           verbose: 3
+      #           node-type: t3.medium
+      #           nodes-max: 2
+      #           ssh-access: true
+      #           ssh-public-key: ~/project/id_rsa.pub
+      #       - run:
+      #           command: |
+      #             kubectl get services
+      #           name: final-project-cluster-creation
+      #       - destroy-cluster
 
   # test-cluster:
   #   docker:
@@ -171,8 +206,10 @@ jobs:
       - run:
           name: Finalize deployment file
           command: |
-            export TAG=<< pipeline.parameters.tag >>:${CIRCLE_WORKFLOW_ID}
-            export dockerpath=${AWS_ACCOUNT_ID}.dkr.ecr.<<pipeline.parameters.aws-region>>.amazonaws.com/$TAG
+            export TAG=<< pipeline.parameters.tag >>:${CIRCLE_WORKFLOW_ID:0:7}
+            # private registry
+            export dockerpath=$DOCKER_USERNAME/$TAG
+            # export dockerpath=<<pipeline.parameters.aws-ecr-name>>/a3e8q8w6/$TAG
 
             echo "TAG: $TAG"
             echo "dockerpath: $dockerpath"
@@ -180,12 +217,26 @@ jobs:
 
             sed -e 's,${image-id},'"$dockerpath"',g
                     s,${container-name},<<pipeline.parameters.cluster-name>>-container,g
-                    s,${app-label},<<pipeline.parameters.tag>>-deploy,g
+                    s,${app-label},<<pipeline.parameters.tag>>,g
                     s,${cluster-name},<<pipeline.parameters.cluster-name>>,g' .circleci/deployment.yaml > .circleci/backupdeployment.yaml
             cat .circleci/backupdeployment.yaml
             mv .circleci/backupdeployment.yaml .circleci/deployment.yaml
-            # sed -e 's/${app-label}/<<pipeline.parameters.tag>>/g
-            #         s/${cluster-name}/<<pipeline.parameters.cluster-name>>/g' .circleci/lb.yaml | tee .circleci/lb.yaml
+
+            sed -e 's/${app-label}/<<pipeline.parameters.tag>>/g
+                    s/${cluster-name}/<<pipeline.parameters.cluster-name>>/g' .circleci/lb.yaml > .circleci/backuplb.yaml
+            cat .circleci/lb.yaml
+            mv .circleci/backuplb.yaml .circleci/lb.yaml
+
+      - run:
+          name: Pre-authentication
+          command: |
+            NAMESPACE_NAME="health-check" && \
+            kubectl create namespace $NAMESPACE_NAME || true && \
+            kubectl create secret docker-registry regcred \
+            --docker-server=${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com \
+            --docker-username=AWS \
+            --docker-password=$(aws ecr get-login-password) \
+            --namespace=$NAMESPACE_NAME || true
       - aws-eks/update-kubeconfig-with-authenticator:
           cluster-name: << pipeline.parameters.cluster-name >>
           aws-profile: default
@@ -194,49 +245,64 @@ jobs:
       - kubernetes/create-or-update-resource:
           resource-file-path: ".circleci/deployment.yaml"
           resource-name: deployment/<<pipeline.parameters.tag>>
-          server-side-apply: false
           namespace: default
-          kustomize: false
-          action-type: apply
-      # - kubernetes/create-or-update-resource:
-      #     resource-file-path: ".circleci/deployment.yaml"
-      #     resource-name: deployment/<<pipeline.parameters.tag>>
-      #     server-side-apply: false
-      #     namespace: default
-      #     kustomize: false
-      #     action-type: apply
+      - kubernetes/create-or-update-resource:
+          resource-file-path: ".circleci/lb.yaml"
+          resource-name: deployment/<<pipeline.parameters.tag>>
+          namespace: default
       - run:
           name: Cluster Status
           command: |
             kubectl get pods
             kubectl describe pods
-      - destroy-cluster
+      - run:
+          name: Rollback
+          command: |
+            kubectl rollout undo deployment/<<pipeline.parameters.cluster-name>>-deployment
+            kubectl rollout status deployment <<pipeline.parameters.cluster-name>>-deployment --timeout=90s
 
+      - destroy-cluster
 workflows:
   build-and-deploy:
     jobs:
       - build-project
       # - setup-aws-credential:
       #     context: aws
-      # - build-docker:
-      #     requires: [build-project, setup-aws-credential]
-      - aws-ecr/build-and-push-image:
-          aws-access-key-id: AWS_ACCESS_KEY_ID
-          aws-cli-version: latest
-          aws-secret-access-key: AWS_SECRET_ACCESS_KEY
-          create-repo: true
-          region: <<pipeline.parameters.aws-region>>
-          registry-id: AWS_ACCOUNT_ID
-          public-registry: false
-          path: ./project-final
-          executor: aws-ecr/default
-          repo: << pipeline.parameters.tag >>:"$CIRCLE_WORKFLOW_ID"
-          tag: "${CIRCLE_WORKFLOW_ID:0:7}"
+      - build-docker:
           requires: [build-project]
+      # Private registry
+      # - aws-ecr/build-and-push-image:
+      #     aws-access-key-id: AWS_ACCESS_KEY_ID
+      #     aws-cli-version: latest
+      #     aws-secret-access-key: AWS_SECRET_ACCESS_KEY
+      #     create-repo: true
+      #     region: <<pipeline.parameters.aws-region>>
+      #     registry-id: AWS_ACCOUNT_ID
+      #     public-registry: false
+      #     path: ./project-final
+      #     executor: aws-ecr/default
+      #     repo: << pipeline.parameters.tag >>"$CIRCLE_WORKFLOW_ID"
+      #     tag: "${CIRCLE_WORKFLOW_ID:0:7}"
+      #     requires: [build-project]
+      # Public registry
+      # - aws-ecr/build-and-push-image:
+      #     aws-access-key-id: AWS_ACCESS_KEY_ID
+      #     aws-cli-version: latest
+      #     aws-secret-access-key: AWS_SECRET_ACCESS_KEY
+      #     create-repo: true
+      #     region: <<pipeline.parameters.aws-region>>
+      #     registry-id: AWS_ACCOUNT_ID
+      #     public-registry: true
+      #     path: ./project-final
+      #     executor: aws-ecr/default
+      #     repo: << pipeline.parameters.tag >>"$CIRCLE_WORKFLOW_ID"
+      #     tag: "${CIRCLE_WORKFLOW_ID:0:7}"
+      #     requires: [build-project]
+      #     public-registry-alias: a3e8q8w6
       - create-cluster:
-          requires:
-            - aws-ecr/build-and-push-image
-          # requires: [build-docker]
+          # requires:
+          # - aws-ecr/build-and-push-image
+          requires: [build-docker]
       # - test-cluster:
       #     requires: [create-cluster]
       - deploy-application:
