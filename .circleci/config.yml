@@ -181,8 +181,9 @@ jobs:
             sed -e 's,${image-id},'"$dockerpath"',g
                     s,${container-name},<<pipeline.parameters.cluster-name>>-container,g
                     s,${app-label},<<pipeline.parameters.tag>>-deploy,g
-                    s,${cluster-name},<<pipeline.parameters.cluster-name>>,g' .circleci/deployment.yaml | tee .circleci/deployment.yaml
-
+                    s,${cluster-name},<<pipeline.parameters.cluster-name>>,g' .circleci/deployment.yaml > .circleci/backupdeployment.yaml
+            cat .circleci/backupdeployment.yaml
+            mv .circleci/backupdeployment.yaml .circleci/deployment.yaml
             # sed -e 's/${app-label}/<<pipeline.parameters.tag>>/g
             #         s/${cluster-name}/<<pipeline.parameters.cluster-name>>/g' .circleci/lb.yaml | tee .circleci/lb.yaml
       - aws-eks/update-kubeconfig-with-authenticator:
