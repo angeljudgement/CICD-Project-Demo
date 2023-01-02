@@ -30,7 +30,7 @@ parameters:
 
 orbs:
   # https://circleci.com/developer/orbs/orb/circleci/aws-eks
-  aws-eks: circleci/aws-eks@<<pipeline.parameters.dev-orb-version>>qqq
+  aws-eks: circleci/aws-eks@<<pipeline.parameters.dev-orb-version>>
   # https://circleci.com/developer/orbs/orb/circleci/kubernetes
   kubernetes: circleci/kubernetes@<<pipeline.parameters.kubernetes-version>>
   aws-ecr: circleci/aws-ecr@8.2.1
