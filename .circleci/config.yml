@@ -178,13 +178,13 @@ jobs:
             echo "dockerpath: $dockerpath"
             ls
 
-            sed -e 's/${image-id}/$dockerpath/g
+            sed -e 's/${image-id}/'"$dockerpath"'/g
                     s/${container-name}/<<pipeline.parameters.cluster-name>>-container/g
                     s/${app-label}/<<pipeline.parameters.tag>>-deploy/g
                     s/${cluster-name}/<<pipeline.parameters.cluster-name>>/g' .circleci/deployment.yaml | tee .circleci/deployment.yaml
 
-            sed -e 's/${app-label}/<<pipeline.parameters.tag>>/g
-                    s/${cluster-name}/<<pipeline.parameters.cluster-name>>/g' .circleci/lb.yaml | tee .circleci/lb.yaml
+            # sed -e 's/${app-label}/<<pipeline.parameters.tag>>/g
+            #         s/${cluster-name}/<<pipeline.parameters.cluster-name>>/g' .circleci/lb.yaml | tee .circleci/lb.yaml
       - aws-eks/update-kubeconfig-with-authenticator:
           cluster-name: << pipeline.parameters.cluster-name >>
           aws-profile: default
@@ -197,9 +197,13 @@ jobs:
           namespace: default
           kustomize: false
           action-type: apply
-      - kubernetes/create-or-update-resource:
-          resource-file-path: ".circleci/lb.yaml"
-          resource-name: deployment/<<pipeline.parameters.tag>>
+      # - kubernetes/create-or-update-resource:
+      #     resource-file-path: ".circleci/deployment.yaml"
+      #     resource-name: deployment/<<pipeline.parameters.tag>>
+      #     server-side-apply: false
+      #     namespace: default
+      #     kustomize: false
+      #     action-type: apply
       - run:
           name: Cluster Status
           command: |
