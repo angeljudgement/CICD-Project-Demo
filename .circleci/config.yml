@@ -178,7 +178,7 @@ jobs:
             echo "dockerpath: $dockerpath"
             ls
 
-            sed -e 's/${image-id}/${dockerpath}/g
+            sed -e 's/${image-id}/$dockerpath/g
                     s/${container-name}/<<pipeline.parameters.cluster-name>>-container/g
                     s/${app-label}/<<pipeline.parameters.tag>>-deploy/g
                     s/${cluster-name}/<<pipeline.parameters.cluster-name>>/g' .circleci/deployment.yaml | tee .circleci/deployment.yaml
@@ -191,15 +191,15 @@ jobs:
           aws-region: <<pipeline.parameters.aws-region>>
           install-kubectl: true
       - kubernetes/create-or-update-resource:
-          resource-file-path: .circleci/deployment.yaml
+          resource-file-path: ".circleci/deployment.yaml"
           resource-name: deployment/<<pipeline.parameters.tag>>
           server-side-apply: false
           namespace: default
           kustomize: false
           action-type: apply
-      # - kubernetes/create-or-update-resource:
-      #     resource-file-path: .circleci/lb.yaml
-      #     resource-name: deployment/<<pipeline.parameters.tag>>
+      - kubernetes/create-or-update-resource:
+          resource-file-path: ".circleci/lb.yaml"
+          resource-name: deployment/<<pipeline.parameters.tag>>
       - run:
           name: Cluster Status
           command: |
