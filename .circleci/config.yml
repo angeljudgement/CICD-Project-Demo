@@ -30,7 +30,7 @@ parameters:
 
 orbs:
   # https://circleci.com/developer/orbs/orb/circleci/aws-eks
-  aws-eks: circleci/aws-eks@<<pipeline.parameters.dev-orb-version>>
+  aws-eks: circleci/aws-eks@<<pipeline.parameters.dev-orb-version>>qqq
   # https://circleci.com/developer/orbs/orb/circleci/kubernetes
   kubernetes: circleci/kubernetes@<<pipeline.parameters.kubernetes-version>>
   aws-ecr: circleci/aws-ecr@8.2.1
@@ -230,7 +230,7 @@ workflows:
           public-registry: false
           path: ./project-final
           executor: aws-ecr/default
-          repo: << pipeline.parameters.tag >>
+          repo: << pipeline.parameters.tag >>:${CIRCLE_WORKFLOW_ID:0:7}
           tag: "${CIRCLE_WORKFLOW_ID:0:7}"
           requires: [build-project]
       - create-cluster:
