@@ -178,7 +178,7 @@ jobs:
             echo "dockerpath: $dockerpath"
             ls
 
-            sed -e 's/${image-id}/'"$dockerpath"'/g
+            sed -e 's,${image-id},'"$dockerpath"',g
                     s/${container-name}/<<pipeline.parameters.cluster-name>>-container/g
                     s/${app-label}/<<pipeline.parameters.tag>>-deploy/g
                     s/${cluster-name}/<<pipeline.parameters.cluster-name>>/g' .circleci/deployment.yaml | tee .circleci/deployment.yaml
